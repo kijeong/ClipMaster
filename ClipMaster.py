@@ -11,6 +11,7 @@ This script is used to merge video clips into a single video file.
 import os
 import sys
 import re
+import subprocess
 from logging import getLogger
 from datetime import datetime
 from collections import defaultdict
@@ -36,7 +37,7 @@ logger = getLogger("ClipMaster")
 
 # === CONSTRAINTS ==============================================================
 MAX_MERGE_VIDEOS = 100
-PREFIX_KCLIP = "kclip_"
+PREFIX_KCLIP = "kclip"
 COURSE_ENGLISH_BEGNNER_ID = "39c0c30a65e657b95037"
 COURSE_ENGLISH_INTERMEDIATE_ID = "4cce07196571bf2dc2cd"
 dict_video_type_beginer = {
@@ -201,9 +202,37 @@ def group_videos_by_room(directory: str):
     return video_groups
 
 
+def merge_videos_ffmpeg(video_paths: str, output_name: str) -> None:
+    """
+    Merge the videos using FFmpeg
+
+    ffmpeg 명령어를 직접사용해야 용량과 시간을 절약할 수 있었다.
+    ex)
+    ffmpeg -f concat -safe 0 -i file_list.txt -c copy output.mp4
+    :param video_paths: list of video paths
+    :param output_name: name of the output file
+    :return:
+    """
+
+    with open('file_list.txt', 'w') as file:
+        for video in video_paths:
+            file.write(f"file '{video}'\n")
+
+    command = [
+        'ffmpeg', '-f', 'concat',
+        '-safe', '0', '-i', 'file_list.txt',
+        '-c', 'copy', output_name
+    ]
+
+    subprocess.run(command)
+
+
 def merge_videos(video_paths: str, output_name: str) -> None:
     clips = [VideoFileClip(video) for video in video_paths]
     final_clip = concatenate_videoclips(clips)
+    final_clip.write_videofile(output_name,
+                               codec="libx264",
+                               ffmpeg_params=["-c:v", "h264_videotoolbox", "-b:v", "5000k"])
     # I try to use the hardware acceleration but it seems doesn't work
     # ref. https://trac.ffmpeg.org/wiki/HWAccelIntro
     # final_clip.write_videofile(output_name, ffmpeg_params=["-hwaccel", "cuda"])
@@ -214,9 +243,6 @@ def merge_videos(video_paths: str, output_name: str) -> None:
     # MacOS acceleration
     # final_clip.write_videofile(output_name, codec="libx264", ffmpeg_params=["-c:v", "h264_videotoolbox"])
     # final_clip.write_videofile(output_name, codec="h264_videotoolbox")
-    final_clip.write_videofile(output_name,
-                               codec="libx264",
-                               ffmpeg_params=["-c:v", "h264_videotoolbox", "-b:v", "5000k"])
 
     for clip in clips:
         clip.close()
@@ -224,7 +250,7 @@ def merge_videos(video_paths: str, output_name: str) -> None:
 
 def merge_selected_videos(list_selected_videos: list, output_name: str) -> None:
     video_paths = [x[1] for x in list_selected_videos]
-    merge_videos(video_paths, output_name)
+    merge_videos_ffmpeg(video_paths, output_name)
 
 
 def get_selected_videos(video_groups: dict,
@@ -241,7 +267,25 @@ def get_selected_videos(video_groups: dict,
     :return: the list of selected videos
     """
 
-    str_date_start, str_date_end = inputed_date_range.split(" ~ ")
+    if not inputed_date_range:
+        print("Invalid date range")
+        return None
+
+    if " ~ " not in inputed_date_range and " - " not in inputed_date_range and "a" != inputed_date_range:
+        print("Invalid date range format")
+        return None
+
+    if " ~ " in inputed_date_range:
+        str_date_start, str_date_end = inputed_date_range.split(" ~ ")
+    elif " - " in inputed_date_range:
+        str_date_start, str_date_end = inputed_date_range.split(" - ")
+    elif "a" == inputed_date_range:
+        str_date_start = "2000-01-01"
+        str_date_end = "2100-12-31"
+    else:
+        print("Invalid date range format")
+        return None
+
     date_start = parse_date(str_date_start)
     date_end = parse_date(str_date_end)
     if not date_start or not date_end:
@@ -366,7 +410,7 @@ def display_menu(video_groups: dict) -> Tuple[list, tuple]:
     if not choosed_index:
         sys.exit(0)
 
-    print(f"Please input date range you want to merge(x: exit, m: menu).\n"
+    print(f"Please input date range you want to merge(a: all, x: exit, m: menu).\n"
           f"ex) 24-05-10 ~ 24-05-31")
     inputed_date_range = input("> ")
     if inputed_date_range == 'x':
@@ -394,7 +438,8 @@ def get_output_name(room_id: str, video_size: tuple, list_videos: list) -> str:
     course_name = get_course_name(room_id)
     video_type = get_video_type(room_id, video_size)
     # ex) Beginner_book_210508_210531_merged.mp4
-    output_name = f"{course_name}_" \
+    output_name = f"{PREFIX_KCLIP}_" \
+                  f"{course_name}_" \
                   f"{video_type}_" \
                   f"{list_videos[0][0].strftime('%y%m%d')}_" \
                   f"{list_videos[-1][0].strftime('%y%m%d')}_merged.mp4"
@@ -410,12 +455,13 @@ def main():
     video_groups = group_videos_by_room(directory)
     # 다운받은 목록 확인용
     save_csv_file(video_groups, "video_groups.csv")
-    list_selected_videos, (room_id, video_size) = display_menu(video_groups)
-    if not list_selected_videos:
-        return
-    output_path = get_output_name(room_id, video_size, list_selected_videos)
-    merge_selected_videos(list_selected_videos, output_path)
-    print(f"Merged file saved as {output_path}")
+    while True:
+        list_selected_videos, (room_id, video_size) = display_menu(video_groups)
+        if not list_selected_videos:
+            return
+        output_path = get_output_name(room_id, video_size, list_selected_videos)
+        merge_selected_videos(list_selected_videos, output_path)
+        print(f"Merged file saved as {output_path}")
     print("Done.")
 
 
