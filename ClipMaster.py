@@ -43,6 +43,8 @@ COURSE_ENGLISH_INTERMEDIATE_ID = "4cce07196571bf2dc2cd"
 dict_video_type_beginer = {
     (1600, 858): "drama_expression",
     (1600, 1398): "phrasal_verbs",
+    # before 2024-04-05
+    (1600, 1396): "phrasal_verbs",
     (1600, 1604): "book",
     (1600, 1888): "book_1",
 }
@@ -50,6 +52,8 @@ dict_video_type_intermidiate = {
     (1600, 732): "drama_with_script",
     (1600, 858): "real_english_expression",
     (1600, 1398): "phrasal_verbs",
+    # before 2024-04-05
+    (1600, 1396): "phrasal_verbs",
 }
 
 
@@ -126,7 +130,7 @@ def extract_roomid_datetime_from_filename(file_name: str) -> Optional[Tuple[str,
 
     if not match:
         logger.debug("File name does not match the expected format")
-        return None
+        return '', datetime.now()
 
     room_id = match.group(1)
     unix_time = match.group(2)
@@ -189,15 +193,17 @@ def group_videos_by_room(directory: str):
         size = tuple(dict_properties['size'])
         fps = dict_properties['fps']
         duration = dict_properties['duration']
-        if size not in video_groups[room_id]:
-            video_groups[room_id][size] = []
-        video_groups[room_id][size].append((date_time, file_path, fps, duration))
+        video_type = get_video_type(room_id, size)
+        if video_type not in video_groups[room_id]:
+            video_groups[room_id][video_type] = []
+        video_groups[room_id][video_type].append((date_time, file_path, fps, duration, size, dict_properties['file_size']))
 
-    # sort the videos by size, then by date
+    # sort the videos by type, then by date
     if video_groups:
-        for room_id, dict_size in video_groups.items():
-            for size in dict_size.keys():
-                video_groups[room_id][size].sort(key=lambda x: x[0])
+        for room_id, dict_video_types in video_groups.items():
+            for video_type in dict_video_types.keys():
+                # sort by date
+                video_groups[room_id][video_type].sort(key=lambda x: x[0])
 
     return video_groups
 
@@ -288,6 +294,7 @@ def get_selected_videos(video_groups: dict,
 
     date_start = parse_date(str_date_start)
     date_end = parse_date(str_date_end)
+    date_end = date_end.replace(hour=23, minute=59, second=59)
     if not date_start or not date_end:
         print("Invalid date format")
         return None
@@ -301,14 +308,14 @@ def get_selected_videos(video_groups: dict,
         print("Invalid candidate")
         return None
 
-    room_id, video_size = list_candidates[choosed_index]
+    room_id, video_type = list_candidates[choosed_index]
     list_selected_videos = None
-    list_videos = video_groups[room_id][video_size]
-    for date, path, fps, duration in list_videos:
+    list_videos = video_groups[room_id][video_type]
+    for date, path, fps, duration, video_size, file_size in list_videos:
         if date_start <= date <= date_end:
             if not list_selected_videos:
                 list_selected_videos = []
-            list_selected_videos.append((date, path, fps, duration))
+            list_selected_videos.append((date, path, fps, duration, video_size, file_size))
 
     if not list_selected_videos:
         print("No videos found for the specified date range")
@@ -335,12 +342,11 @@ def save_csv_file(video_groups: dict, output_name: str) -> None:
     :return:
     """
     with open(output_name, "w") as f:
-        f.write("room_id, course_name, video_size, video_type, date, path, fps, duration\n")
-        for room_id, dict_sizes in video_groups.items():
+        f.write("room_id, course_name, video_size, video_type, date, path, fps, duration, file_size\n")
+        for room_id, dict_video_types in video_groups.items():
             course_name = get_course_name(room_id)
-            for video_size, list_videos in dict_sizes.items():
-                video_type = get_video_type(room_id, video_size)
-                for date, path, fps, duration in list_videos:
+            for video_type, list_videos in dict_video_types.items():
+                for date, path, fps, duration, video_size, file_size in list_videos:
                     f.write(f"{room_id}, "
                             f"{course_name}, "
                             f"{video_size[0]}X{video_size[1]}, "
@@ -348,12 +354,14 @@ def save_csv_file(video_groups: dict, output_name: str) -> None:
                             f"{date.strftime('%Y-%m-%d %H:%M:%S')}, "
                             f"{os.path.basename(path)}, "
                             f"{fps:.0f}, "
-                            f"{duration:.0f}\n")
+                            f"{duration:.0f},"
+                            f"{file_size},"
+                            f"\n")
 
 
-def get_subject_duration_sum(dict_sizes: dict, video_size: tuple) -> str:
+def get_subject_duration_sum(dict_sizes: dict, video_type: str) -> str:
     sum_duration = 0
-    for date, path, fps, duration in dict_sizes[video_size]:
+    for date, path, fps, duration, video_size, file_size in dict_sizes[video_type]:
         sum_duration += duration
     str_total_duration = datetime.utcfromtimestamp(sum_duration).strftime('%H:%M:%S')
     return str_total_duration
@@ -386,24 +394,23 @@ def display_menu(video_groups: dict) -> Tuple[list, tuple]:
 
     print("Please select the course you want to merge.")
     print("0. Exit")
-    for room_id, dict_sizes in video_groups.items():
+    for room_id, dict_video_types in video_groups.items():
         course_name = get_course_name(room_id)
-        if not dict_sizes:
+        if not dict_video_types:
             continue
 
         # print the videos in each group
-        # ex. video_size: (1600, 1398), list_videos: [(datetime, path, fps, duration), ...]
-        for video_size, list_videos in dict_sizes.items():
+        # ex. video_type: 'something', list_videos: [(datetime, path, fps, duration), ...]
+        for video_type, list_videos in dict_video_types.items():
             if not list_videos:
                 continue
 
-            video_type = get_video_type(room_id, video_size)
-            sum_duration = get_subject_duration_sum(dict_sizes, video_size)
+            sum_duration = get_subject_duration_sum(dict_video_types, video_type)
             print(f"{menu_index}. {course_name} {video_type}: {{count: {len(list_videos)}, " 
                   f"date range: {list_videos[0][0].strftime('%y-%m-%d')} ~ {list_videos[-1][0].strftime('%y-%m-%d')}, "
                   f"total duration: {sum_duration} }}")
             # 여기서 list_videos를 list_candidates에 추가할 수도 있지만, room_id와 video_size를 함께 저장하는 것이 더 범용적으로 사용할 수 있을것 같다.
-            list_candidates.append((room_id, video_size))
+            list_candidates.append((room_id, video_type))
             menu_index += 1
 
     choosed_index = int(input("> "))
@@ -425,18 +432,17 @@ def display_menu(video_groups: dict) -> Tuple[list, tuple]:
     return list_selected_videos, list_candidates[choosed_index]
 
 
-def get_output_name(room_id: str, video_size: tuple, list_videos: list) -> str:
+def get_output_name(room_id: str, video_type: str, list_videos: list) -> str:
     """
     Get the output name for the merged video
 
     :param room_id: the room ID
-    :param video_size: the video size
+    :param video_type: the video type
     :param list_videos: the list of selected videos
     :return: the output name
     """
 
     course_name = get_course_name(room_id)
-    video_type = get_video_type(room_id, video_size)
     # ex) Beginner_book_210508_210531_merged.mp4
     output_name = f"{PREFIX_KCLIP}_" \
                   f"{course_name}_" \
@@ -456,10 +462,10 @@ def main():
     # 다운받은 목록 확인용
     save_csv_file(video_groups, "video_groups.csv")
     while True:
-        list_selected_videos, (room_id, video_size) = display_menu(video_groups)
+        list_selected_videos, (room_id, video_type) = display_menu(video_groups)
         if not list_selected_videos:
             return
-        output_path = get_output_name(room_id, video_size, list_selected_videos)
+        output_path = get_output_name(room_id, video_type, list_selected_videos)
         merge_selected_videos(list_selected_videos, output_path)
         print(f"Merged file saved as {output_path}")
     print("Done.")
