@@ -28,8 +28,8 @@ change_settings({"FFMPEG_BINARY": "/usr/local/bin/ffmpeg"})
 
 # ==============================================================================
 __author__ = "kijeong"
-__date__ = "2024-05-24"
-__version__ = "0.0.1"
+__date__ = "2024-07-02"
+__version__ = "0.0.2"
 
 # === GLOBALS ==================================================================
 logger = getLogger("ClipMaster")
@@ -39,15 +39,27 @@ logger = getLogger("ClipMaster")
 MAX_MERGE_VIDEOS = 100
 # merged file name prefix
 PREFIX_KCLIP = "kclip"
+# renamed file name prefix
+PREFIX_NCLIP = "nclip"
+# sori clip file name prefix
+PREFIX_SCLIP = "rooms"
 
 # room ID
 COURSE_ENGLISH_BEGNNER_ID = "39c0c30a65e657b95037"
 COURSE_ENGLISH_INTERMEDIATE_ID = "4cce07196571bf2dc2cd"
 dict_video_type_beginer = {
+    # drama
     (1600, 858): "drama_expression",
+
+    # phrasal verbs
     (1600, 1398): "phrasal_verbs",
     # before 2024-04-05
     (1600, 1396): "phrasal_verbs",
+    # before 2024-06-05
+    (1600, 1492): "phrasal_verbs",
+    (1600, 1498): "phrasal_verbs",
+
+    # book
     (1600, 1604): "book",
     (1600, 1888): "book_1",
 }
@@ -61,6 +73,27 @@ dict_video_type_intermidiate = {
     (1600, 1492): "phrasal_verbs",
     (1600, 1498): "phrasal_verbs",
 }
+
+
+class ClipPiece:
+    """
+    A class to represent a video clip
+    """
+
+    def __init__(self):
+        self.file_path = None
+        self.start_time = None
+        self.end_time = None
+        self.duration = None
+        self.video_size = None
+        self.fps = None
+        self.file_size = None
+        self.course_name = None
+        self.video_type = None
+        self.room_id = None
+        self.date_time = None
+        self.video_size = None
+        self.file_name_type = None
 
 
 # === FUNCTIONS ================================================================
@@ -121,108 +154,45 @@ def parse_date(str_date: str) -> Optional[datetime]:
         # 모든 시도가 실패하면 None을 반환합니다.
         return None
 
-def extract_roomid_datetime_from_filename_sclip(file_name: str) -> Optional[Tuple[str, datetime]]:
-    """
-    Extract the room ID and date time from the file name
 
-    :param file_name: file name to extract the information from
+def get_file_name_type(file_name: str) -> str:
+    """
+    file name type:
+        'unknown'
+        'nclip'
+        'kclip'
+    :param file_name:
     :return:
     """
 
-    # Skip the kclip files
-    # because they are not the videos we are interested in
-    # because they made by this program
     if file_name.startswith(PREFIX_KCLIP):
-        return '', datetime.now()
-
-    # Regular expression to match the required parts of the file name
-    pattern = r'rooms_(\w+)_videos_video-(\d+)\.webm\.mp4'
-    match = re.search(pattern, file_name)
-
-    if not match:
-        logger.debug("File name does not match the expected format")
-        return '', datetime.now()
-
-    room_id = match.group(1)
-    unix_time = match.group(2)
-
-    # Convert Unix time to a readable date
-    date_time = datetime.fromtimestamp(int(unix_time) / 1000)
-
-    return room_id, date_time
+        return 'kclip'
+    elif file_name.startswith(PREFIX_NCLIP):
+        return 'nclip'
+    elif file_name.startswith(PREFIX_SCLIP):
+        return 'sclip'
+    else:
+        return 'unknown'
 
 
-def get_video_properties(video_path: str) -> dict:
-    clip = VideoFileClip(video_path)
-    fps = clip.fps
-    duration = clip.duration
-    file_size = os.path.getsize(video_path)
-    return {
-        "size": clip.size,
-        "fps": fps,
-        "duration": duration,
-        "file_size": file_size
-    }
-
-
-def get_mp4_files(file_path: str) -> list[str]:
+def get_target_clips(file_path_dir: str) -> list[str]:
     import os
-    list_files = os.listdir(file_path)
+    list_files = os.listdir(file_path_dir)
     list_mp4_files = [x for x in list_files if x.endswith(".mp4")]
-    return list_mp4_files
-
-
-def get_video_size(file_path: str) -> tuple[int, int]:
-    clip = VideoFileClip(file_path)
-    size = clip.size
-    clip.close()
-    return size
-
-
-def group_videos_by_room(directory: str):
-    """
-    Group the videos by room ID and video size
-
-    :param directory: Directory containing the video files
-    :return: dictionary of video groups
-    """
-
-    video_groups = defaultdict(dict)
-    for file_name in os.listdir(directory):
-
-        if not file_name.endswith('.mp4'):
+    list_video_clip = []
+    for file_name in list_mp4_files:
+        file_path = os.path.join(file_path_dir, file_name)
+        try:
+            clip_piece = get_clip_piece(file_path)
+        except Exception as err:
+            print(f"Error: {err}")
             continue
-
-        # Skip the kclip files
-        # because they are not the videos we are interested in
-        # because they made by this program
-        if file_name.startswith(PREFIX_KCLIP):
+        if not clip_piece:
             continue
-        file_path = os.path.join(directory, file_name)
-        room_id, date_time = extract_roomid_datetime_from_filename_sclip(file_name)
+        list_video_clip.append(clip_piece)
+    list_video_clip = sorted(list_video_clip, key=lambda clip: (clip.course_name, clip.video_type, clip.date_time))
 
-        if not room_id or not date_time:
-            continue
-
-        file_path = os.path.join(directory, file_name)
-        dict_properties = get_video_properties(file_path)
-        size = tuple(dict_properties['size'])
-        fps = dict_properties['fps']
-        duration = dict_properties['duration']
-        video_type = get_video_type(room_id, size)
-        if video_type not in video_groups[room_id]:
-            video_groups[room_id][video_type] = []
-        video_groups[room_id][video_type].append(
-            (date_time, file_path, fps, duration, size, dict_properties['file_size']))
-
-    # sort the videos by type, then by date
-    if video_groups:
-        for room_id, dict_video_types in video_groups.items():
-            for video_type in dict_video_types.keys():
-                # sort by date
-                video_groups[room_id][video_type].sort(key=lambda x: x[0])
-
-    return video_groups
+    return list_video_clip
 
 
 def merge_videos_ffmpeg(video_paths: str, output_name: str) -> None:
@@ -272,20 +242,18 @@ def merge_videos(video_paths: str, output_name: str) -> None:
 
 
 def merge_selected_videos(list_selected_videos: list, output_name: str) -> None:
-    video_paths = [x[1] for x in list_selected_videos]
+    video_paths = [x.file_path for x in list_selected_videos]
     merge_videos_ffmpeg(video_paths, output_name)
 
 
-def get_selected_videos(video_groups: dict,
-                        list_candidates: list,
-                        choosed_index: int,
+def get_selected_videos(dict_candidates: dict,
+                        choosed_group_id: int,
                         inputed_date_range: str) -> Optional[list]:
     """
     Get the selected videos based on the user input
 
-    :param video_groups: all the video groups
-    :param list_candidates: list of candidates
-    :param choosed_index: the index of the chosen candidate
+    :param dict_candidates: all the video groups
+    :param choosed_group_id: the group id of the chosen candidate
     :param inputed_date_range: the inputed date range
     :return: the list of selected videos
     """
@@ -318,21 +286,17 @@ def get_selected_videos(video_groups: dict,
     if date_start > date_end:
         print("Invalid date range")
         return None
-    if choosed_index not in range(1, len(list_candidates)):
-        print("Invalid index")
-        return None
-    if not list_candidates[choosed_index]:
+
+    if not dict_candidates[choosed_group_id]:
         print("Invalid candidate")
         return None
 
-    room_id, video_type = list_candidates[choosed_index]
     list_selected_videos = None
-    list_videos = video_groups[room_id][video_type]
-    for date, path, fps, duration, video_size, file_size in list_videos:
-        if date_start <= date <= date_end:
+    for clip in dict_candidates[choosed_group_id]:
+        if date_start <= clip.date_time <= date_end:
             if not list_selected_videos:
-                list_selected_videos = []
-            list_selected_videos.append((date, path, fps, duration, video_size, file_size))
+                list_selected_videos = list()
+            list_selected_videos.append(clip)
 
     if not list_selected_videos:
         print("No videos found for the specified date range")
@@ -349,42 +313,48 @@ def get_selected_videos(video_groups: dict,
     return list_selected_videos
 
 
-def save_csv_file(video_groups: dict, output_name: str) -> None:
+def save_csv_file(clip_piecs: list, output_name: str) -> None:
     """
     Save the video groups to a CSV file
 
     다운 받은 파일 세부 사항 확인용
-    :param video_groups: dictionary of video groups
+    :param clip_piecs: list of video groups
     :param output_name: name of the output file
     :return:
     """
     with open(output_name, "w") as f:
         f.write("room_id, course_name, video_size, video_type, date, path, fps, duration, file_size\n")
-        for room_id, dict_video_types in video_groups.items():
-            course_name = get_course_name(room_id)
-            for video_type, list_videos in dict_video_types.items():
-                for date, path, fps, duration, video_size, file_size in list_videos:
-                    f.write(f"{room_id}, "
-                            f"{course_name}, "
-                            f"{video_size[0]}X{video_size[1]}, "
-                            f"{video_type}, "
-                            f"{date.strftime('%Y-%m-%d %H:%M:%S')}, "
-                            f"{os.path.basename(path)}, "
-                            f"{fps:.0f}, "
-                            f"{duration:.0f},"
-                            f"{file_size}"
-                            f"\n")
+        for clip in clip_piecs:
+            f.write(f"{clip.room_id}, "
+                    f"{clip.course_name}, "
+                    f"{clip.video_size[0]}X{clip.video_size[1]}, "
+                    f"{clip.video_type}, "
+                    f"{clip.date_time.strftime('%Y-%m-%d %H:%M:%S')}, "
+                    f"{os.path.basename(clip.file_path)}, "
+                    f"{clip.fps:.0f}, "
+                    f"{clip.duration:.0f},"
+                    f"{clip.file_size}"
+                    f"\n")
 
 
-def get_subject_duration_sum(dict_sizes: dict, video_type: str) -> str:
+def get_subject_duration_sum(dict_groups: dict, griup_id: str) -> str:
+    """
+    Get the total duration of the video clips in a group
+
+    :param dict_groups: groups of video clips
+    :param griup_id: the group id
+    :return: the total duration
+    """
+
     sum_duration = 0
-    for date, path, fps, duration, video_size, file_size in dict_sizes[video_type]:
-        sum_duration += duration
+    for clip in dict_groups[griup_id]:
+        sum_duration += clip.duration
+
     str_total_duration = datetime.utcfromtimestamp(sum_duration).strftime('%H:%M:%S')
     return str_total_duration
 
 
-def display_menu(video_groups: dict) -> Tuple[list, tuple]:
+def display_menu(clips: list) -> Optional[list]:
     """
     Display a menu to the user to select the videos to merge
 
@@ -407,32 +377,43 @@ def display_menu(video_groups: dict) -> Tuple[list, tuple]:
     """
 
     menu_index = 1
-    list_candidates = [None, ]
+    dict_candidates = defaultdict(list)
+
+    if not clips:
+        print("No video clips found.")
+        return None
 
     print("Please select the course you want to merge.")
     print("0. Exit")
-    for room_id, dict_video_types in video_groups.items():
-        course_name = get_course_name(room_id)
-        if not dict_video_types:
-            continue
 
-        # print the videos in each group
-        # ex. video_type: 'something', list_videos: [(datetime, path, fps, duration), ...]
-        for video_type, list_videos in dict_video_types.items():
-            if not list_videos:
-                continue
+    for clip in clips:
+        group_id = f'{clip.room_id}_{clip.video_type}'
+        dict_candidates[group_id].append(clip)
 
-            sum_duration = get_subject_duration_sum(dict_video_types, video_type)
-            print(f"{menu_index}. {course_name} {video_type}: {{count: {len(list_videos)}, " 
-                  f"date range: {list_videos[0][0].strftime('%y-%m-%d')} ~ {list_videos[-1][0].strftime('%y-%m-%d')}, "
-                  f"total duration: {sum_duration} }}")
-            # 여기서 list_videos를 list_candidates에 추가할 수도 있지만, room_id와 video_size를 함께 저장하는 것이 더 범용적으로 사용할 수 있을것 같다.
-            list_candidates.append((room_id, video_type))
-            menu_index += 1
+    # sort clips by date
+    for group_id in dict_candidates.keys():
+        sorted(dict_candidates[group_id], key=lambda x: x.date_time)
+
+    for group_id, list_clips in dict_candidates.items():
+        course_name = list_clips[0].course_name
+        video_type = list_clips[0].video_type
+        date_start = list_clips[0].date_time
+        date_end = list_clips[-1].date_time
+        str_date_start = date_start.strftime('%y-%m-%d')
+        str_date_end = date_end.strftime('%y-%m-%d')
+        sum_duration = get_subject_duration_sum(dict_candidates, group_id)
+        print(f"{menu_index}. {course_name} {video_type}: "
+              f"{{count: {len(list_clips)}, date range: {str_date_start} ~ {str_date_end}, total duration: {sum_duration}}}")
+        menu_index += 1
 
     choosed_index = int(input("> "))
     if not choosed_index:
         sys.exit(0)
+
+    if choosed_index not in range(1, len(dict_candidates) + 1):
+        print("Invalid index")
+        return None
+    choosed_group_id = list(dict_candidates.keys())[choosed_index - 1]
 
     print(f"Please input date range you want to merge(a: all, x: exit, m: menu).\n"
           f"ex) 24-05-10 ~ 24-05-31")
@@ -440,38 +421,143 @@ def display_menu(video_groups: dict) -> Tuple[list, tuple]:
     if inputed_date_range == 'x':
         sys.exit(0)
     if inputed_date_range == 'm':
-        return display_menu(video_groups)
+        return display_menu(clips)
 
-    list_selected_videos = get_selected_videos(video_groups, list_candidates, choosed_index, inputed_date_range)
+    list_selected_videos = get_selected_videos(dict_candidates, choosed_group_id, inputed_date_range)
     if not list_selected_videos:
-        return display_menu(video_groups)
+        return display_menu(clips)
 
-    return list_selected_videos, list_candidates[choosed_index]
+    return list_selected_videos
 
 
-def get_output_name(room_id: str, video_type: str, list_videos: list) -> str:
+def get_output_name(selected_clips) -> str:
     """
     Get the output name for the merged video
 
-    :param room_id: the room ID
-    :param video_type: the video type
-    :param list_videos: the list of selected videos
+    :param selected_clips: selected video clips
     :return: the output name
     """
 
-    course_name = get_course_name(room_id)
+    course_name = selected_clips[0].course_name
+    video_type = selected_clips[0].video_type
+
     # ex) Beginner_book_210508_210531_merged.mp4
     output_name = f"{PREFIX_KCLIP}_" \
                   f"{course_name}_" \
                   f"{video_type}_" \
-                  f"{list_videos[0][0].strftime('%y%m%d')}_" \
-                  f"{list_videos[-1][0].strftime('%y%m%d')}_merged.mp4"
+                  f"{selected_clips[0].date_time.strftime('%y%m%d')}_" \
+                  f"{selected_clips[-1].date_time.strftime('%y%m%d')}_merged.mp4"
     return output_name
+
+
+def generate_new_name(date_time, course_name, video_type):
+    new_name = f"{PREFIX_NCLIP}_{course_name}_{video_type}_{date_time.strftime('%y%m%d%H%M')}.mp4"
+    return new_name
+
+
+def rename_files(clips: list) -> None:
+    """
+    Rename the video files
+
+    :param clips: list of video clips
+    :return:
+    """
+
+    for clip in clips:
+        file_name = os.path.basename(clip.file_path)
+        if file_name.startswith(PREFIX_NCLIP):
+            continue
+        new_name = generate_new_name(clip.date_time, clip.course_name, clip.video_type)
+        try:
+            os.rename(clip.file_path, os.path.join(os.path.dirname(clip.file_path), new_name))
+        except Exception as err:
+            print(f"Error: {err}")
+        print(f"{file_name} -> {new_name}")
+
+
+def get_clip_piece(file_path: str) -> Optional[ClipPiece]:
+    """
+    Get the video clip details
+
+    :param file_path: the path of the video file
+    :return: the video clip details
+    """
+
+    file_name = os.path.basename(file_path)
+
+    if not file_name.endswith('.mp4'):
+        return None
+
+    file_name_type = get_file_name_type(file_name)
+
+    if file_name_type == "unknown" or file_name_type == "kclip":
+        return None
+
+    pattern = None
+
+    if file_name.startswith(PREFIX_NCLIP):
+        # ex)"nclip_Intermediate_phrasal_verbs_2406101101.mp4"
+        pattern = r'nclip_(\w+)_([\w_]+)_(\d{10})\.mp4'
+
+    elif file_name.startswith(PREFIX_SCLIP):
+        # Regular expression to match the required parts of the file name
+        pattern = r'rooms_(\w+)_videos_video-(\d+)\.webm\.mp4'
+    else:
+        raise ValueError("Invalid file name")
+
+    if not pattern:
+        return None
+
+    match = re.search(pattern, file_name)
+
+    if not match:
+        logger.debug("File name does not match the expected format")
+        return None
+
+    course_name = None
+    video_type = None
+    str_date_time = None
+    room_id = None
+    unix_time = None
+
+    if file_name.startswith(PREFIX_NCLIP):
+        course_name = match.group(1)
+        video_type = match.group(2)
+        str_date_time = match.group(3)
+    elif file_name.startswith(PREFIX_SCLIP):
+        room_id = match.group(1)
+        unix_time = match.group(2)
+
+    if str_date_time:
+        # Convert the date time string to a datetime object
+        date_time = datetime.strptime(str_date_time, "%y%m%d%H%M")
+    else:
+        # Convert Unix time to a readable date
+        date_time = datetime.fromtimestamp(int(unix_time) / 1000)
+
+    clip = VideoFileClip(file_path)
+    clip_piece = ClipPiece()
+    clip_piece.file_path = file_path
+    clip_piece.start_time = 0
+    clip_piece.end_time = clip.duration
+    clip_piece.duration = clip.duration
+    clip_piece.video_size = tuple(clip.size)
+    clip_piece.fps = clip.fps
+    clip_piece.file_size = os.path.getsize(file_path)
+
+    clip_piece.room_id, clip_piece.date_time = room_id, date_time
+    if not course_name:
+        clip_piece.course_name = get_course_name(clip_piece.room_id)
+    if not video_type:
+        clip_piece.video_type = get_video_type(clip_piece.room_id, clip_piece.video_size)
+    return clip_piece
 
 
 def main():
     if len(sys.argv) == 2 and sys.argv[1] in ["-h", "--help"]:
-        print("Usage: python ClipMaster.py <directory> (default: ./sample_files)")
+        print("Usage: python ClipMaster.py (default: ./sample_files)")
+        print("Usage: python ClipMaster.py <directory>")
+        print("Usage: python ClipMaster.py rename <directory>")
         sys.exit(1)
     directory = None
     if len(sys.argv) == 1:
@@ -489,16 +575,21 @@ def main():
         print("Please provide the directory containing the video files")
         sys.exit(1)
 
-    video_groups = group_videos_by_room(directory)
+    clips = get_target_clips(directory)
+
+    if len(sys.argv) == 3 and sys.argv[1] == "rename":
+        rename_files(clips)
+        return 0
 
     # 다운받은 목록 확인용
-    save_csv_file(video_groups, "video_groups.csv")
+    save_csv_file(clips, "video_clips.csv")
+
     while True:
-        list_selected_videos, (room_id, video_type) = display_menu(video_groups)
-        if not list_selected_videos:
+        selected_clips = display_menu(clips)
+        if not selected_clips:
             break
-        output_path = get_output_name(room_id, video_type, list_selected_videos)
-        merge_selected_videos(list_selected_videos, output_path)
+        output_path = get_output_name(selected_clips)
+        merge_selected_videos(selected_clips, output_path)
         print(f"Merged file saved as {output_path}")
     print("Done.")
 
