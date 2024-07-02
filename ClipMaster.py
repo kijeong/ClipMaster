@@ -37,7 +37,10 @@ logger = getLogger("ClipMaster")
 
 # === CONSTRAINTS ==============================================================
 MAX_MERGE_VIDEOS = 100
+# merged file name prefix
 PREFIX_KCLIP = "kclip"
+
+# room ID
 COURSE_ENGLISH_BEGNNER_ID = "39c0c30a65e657b95037"
 COURSE_ENGLISH_INTERMEDIATE_ID = "4cce07196571bf2dc2cd"
 dict_video_type_beginer = {
@@ -54,6 +57,9 @@ dict_video_type_intermidiate = {
     (1600, 1398): "phrasal_verbs",
     # before 2024-04-05
     (1600, 1396): "phrasal_verbs",
+    # before 2024-06-05
+    (1600, 1492): "phrasal_verbs",
+    (1600, 1498): "phrasal_verbs",
 }
 
 
@@ -115,14 +121,19 @@ def parse_date(str_date: str) -> Optional[datetime]:
         # 모든 시도가 실패하면 None을 반환합니다.
         return None
 
-
-def extract_roomid_datetime_from_filename(file_name: str) -> Optional[Tuple[str, datetime]]:
+def extract_roomid_datetime_from_filename_sclip(file_name: str) -> Optional[Tuple[str, datetime]]:
     """
     Extract the room ID and date time from the file name
 
     :param file_name: file name to extract the information from
     :return:
     """
+
+    # Skip the kclip files
+    # because they are not the videos we are interested in
+    # because they made by this program
+    if file_name.startswith(PREFIX_KCLIP):
+        return '', datetime.now()
 
     # Regular expression to match the required parts of the file name
     pattern = r'rooms_(\w+)_videos_video-(\d+)\.webm\.mp4'
@@ -178,17 +189,22 @@ def group_videos_by_room(directory: str):
 
     video_groups = defaultdict(dict)
     for file_name in os.listdir(directory):
+
         if not file_name.endswith('.mp4'):
             continue
+
         # Skip the kclip files
         # because they are not the videos we are interested in
         # because they made by this program
         if file_name.startswith(PREFIX_KCLIP):
             continue
         file_path = os.path.join(directory, file_name)
-        room_id, date_time = extract_roomid_datetime_from_filename(file_name)
+        room_id, date_time = extract_roomid_datetime_from_filename_sclip(file_name)
+
         if not room_id or not date_time:
             continue
+
+        file_path = os.path.join(directory, file_name)
         dict_properties = get_video_properties(file_path)
         size = tuple(dict_properties['size'])
         fps = dict_properties['fps']
@@ -196,7 +212,8 @@ def group_videos_by_room(directory: str):
         video_type = get_video_type(room_id, size)
         if video_type not in video_groups[room_id]:
             video_groups[room_id][video_type] = []
-        video_groups[room_id][video_type].append((date_time, file_path, fps, duration, size, dict_properties['file_size']))
+        video_groups[room_id][video_type].append(
+            (date_time, file_path, fps, duration, size, dict_properties['file_size']))
 
     # sort the videos by type, then by date
     if video_groups:
@@ -213,7 +230,7 @@ def merge_videos_ffmpeg(video_paths: str, output_name: str) -> None:
     Merge the videos using FFmpeg
 
     ffmpeg 명령어를 직접사용해야 용량과 시간을 절약할 수 있었다.
-    ex)
+    ex.
     ffmpeg -f concat -safe 0 -i file_list.txt -c copy output.mp4
     :param video_paths: list of video paths
     :param output_name: name of the output file
@@ -355,7 +372,7 @@ def save_csv_file(video_groups: dict, output_name: str) -> None:
                             f"{os.path.basename(path)}, "
                             f"{fps:.0f}, "
                             f"{duration:.0f},"
-                            f"{file_size},"
+                            f"{file_size}"
                             f"\n")
 
 
@@ -453,18 +470,33 @@ def get_output_name(room_id: str, video_type: str, list_videos: list) -> str:
 
 
 def main():
-    if len(sys.argv) != 2:
-        print("Usage: python ClipMaster.py <directory>")
+    if len(sys.argv) == 2 and sys.argv[1] in ["-h", "--help"]:
+        print("Usage: python ClipMaster.py <directory> (default: ./sample_files)")
+        sys.exit(1)
+    directory = None
+    if len(sys.argv) == 1:
+        # default directory
+        directory = "./sample_files"
+        print(f"Using the default directory: {directory}")
+    if 3 < len(sys.argv):
+        print("Too many arguments")
         sys.exit(1)
 
-    directory = sys.argv[1]
+    if not directory:
+        directory = sys.argv[-1]
+
+    if not os.path.exists(directory):
+        print("Please provide the directory containing the video files")
+        sys.exit(1)
+
     video_groups = group_videos_by_room(directory)
+
     # 다운받은 목록 확인용
     save_csv_file(video_groups, "video_groups.csv")
     while True:
         list_selected_videos, (room_id, video_type) = display_menu(video_groups)
         if not list_selected_videos:
-            return
+            break
         output_path = get_output_name(room_id, video_type, list_selected_videos)
         merge_selected_videos(list_selected_videos, output_path)
         print(f"Merged file saved as {output_path}")
