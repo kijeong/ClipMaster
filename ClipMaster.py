@@ -15,12 +15,13 @@ import subprocess
 from logging import getLogger
 from datetime import datetime
 from collections import defaultdict
-from typing import Optional, Tuple
+from typing import Optional
 
 # modules specific
 from dateutil import parser
 from moviepy.editor import VideoFileClip, concatenate_videoclips
 from moviepy.config import change_settings
+from tqdm import tqdm
 
 change_settings({"FFMPEG_BINARY": "/usr/local/bin/ffmpeg"})
 
@@ -47,7 +48,9 @@ PREFIX_SCLIP = "rooms"
 # room ID
 COURSE_ENGLISH_BEGNNER_ID = "39c0c30a65e657b95037"
 COURSE_ENGLISH_INTERMEDIATE_ID = "4cce07196571bf2dc2cd"
-dict_video_type_beginer = {
+
+dict_video_type_beginer = defaultdict(lambda: "Unknown")
+dict_video_type_beginer.update({
     # drama
     (1600, 858): "drama_expression",
 
@@ -60,10 +63,15 @@ dict_video_type_beginer = {
     (1600, 1498): "phrasal_verbs",
 
     # book
+    # before 2024-07-31
+    (1600, 1562): "book",
     (1600, 1604): "book",
     (1600, 1888): "book_1",
 }
-dict_video_type_intermidiate = {
+)
+
+dict_video_type_intermidiate = defaultdict(lambda: "Unknown")
+dict_video_type_intermidiate.update({
     (1600, 732): "drama_with_script",
     (1600, 858): "real_english_expression",
     (1600, 1398): "phrasal_verbs",
@@ -72,7 +80,7 @@ dict_video_type_intermidiate = {
     # before 2024-06-05
     (1600, 1492): "phrasal_verbs",
     (1600, 1498): "phrasal_verbs",
-}
+})
 
 
 class ClipPiece:
@@ -107,7 +115,7 @@ def get_course_name(room_id: str) -> str:
         return "Unknown"
 
 
-def get_video_type(room_id: str, video_size: tuple) -> str:
+def get_video_type(room_id: str, video_size: tuple):
     dict_video_type = dict_video_type_beginer if room_id == COURSE_ENGLISH_BEGNNER_ID else dict_video_type_intermidiate
     return dict_video_type.get(video_size, "Unknown")
 
@@ -175,12 +183,12 @@ def get_file_name_type(file_name: str) -> str:
         return 'unknown'
 
 
-def get_target_clips(file_path_dir: str) -> list[str]:
+def get_target_clips(file_path_dir: str) -> list[ClipPiece]:
     import os
     list_files = os.listdir(file_path_dir)
     list_mp4_files = [x for x in list_files if x.endswith(".mp4")]
     list_video_clip = []
-    for file_name in list_mp4_files:
+    for file_name in tqdm(list_mp4_files, desc="Analyzing video files"):
         file_path = os.path.join(file_path_dir, file_name)
         try:
             clip_piece = get_clip_piece(file_path)
@@ -195,7 +203,7 @@ def get_target_clips(file_path_dir: str) -> list[str]:
     return list_video_clip
 
 
-def merge_videos_ffmpeg(video_paths: str, output_name: str) -> None:
+def merge_videos_ffmpeg(video_paths: list, output_name: str) -> None:
     """
     Merge the videos using FFmpeg
 
@@ -226,14 +234,14 @@ def merge_videos(video_paths: str, output_name: str) -> None:
     final_clip.write_videofile(output_name,
                                codec="libx264",
                                ffmpeg_params=["-c:v", "h264_videotoolbox", "-b:v", "5000k"])
-    # I try to use the hardware acceleration but it seems doesn't work
+    # I try to use the hardware acceleration, but it seems doesn't work
     # ref. https://trac.ffmpeg.org/wiki/HWAccelIntro
     # final_clip.write_videofile(output_name, ffmpeg_params=["-hwaccel", "cuda"])
     # NVIDIA GPU acceleration
     # final_clip.write_videofile(output_name, ffmpeg_params=["-hwaccel", "cuda"])
     # AMD GPU acceleration
     # final_clip.write_videofile(output_name, ffmpeg_params=["-hwaccel", "dxva2"])
-    # MacOS acceleration
+    # macOS acceleration
     # final_clip.write_videofile(output_name, codec="libx264", ffmpeg_params=["-c:v", "h264_videotoolbox"])
     # final_clip.write_videofile(output_name, codec="h264_videotoolbox")
 
@@ -369,10 +377,10 @@ def display_menu(clips: list) -> Optional[list]:
     6. Intermediate phrasal_verbs: {count: 13, date range: 24-07-27 ~ 24-08-09, total duration: 00:00:00}
     > 2
     Please input date range you want to merge(x: exit, m: menu).
-    ex) 24-06-01 ~ 24-06-14
+    ex. 24-06-01 ~ 24-06-14
     > 24-06-01 ~ 24-06-14
 
-    :param video_groups:
+    :param clips: list of video clips
     :return:
     """
 
@@ -403,7 +411,8 @@ def display_menu(clips: list) -> Optional[list]:
         str_date_end = date_end.strftime('%y-%m-%d')
         sum_duration = get_subject_duration_sum(dict_candidates, group_id)
         print(f"{menu_index}. {course_name} {video_type}: "
-              f"{{count: {len(list_clips)}, date range: {str_date_start} ~ {str_date_end}, total duration: {sum_duration}}}")
+              f"{{count: {len(list_clips)}, date range: {str_date_start} ~ {str_date_end}, "
+              f"total duration: {sum_duration}}}")
         menu_index += 1
 
     choosed_index = int(input("> "))
@@ -467,7 +476,11 @@ def rename_files(clips: list) -> None:
         file_name = os.path.basename(clip.file_path)
         if file_name.startswith(PREFIX_NCLIP):
             continue
-        new_name = generate_new_name(clip.date_time, clip.course_name, clip.video_type)
+        video_type = clip.video_type
+        if clip.video_type == "unknown":
+            video_type = f"unknown_{clip.video_size[0]}X{clip.video_size[1]}"
+
+        new_name = generate_new_name(clip.date_time, clip.course_name, video_type)
         try:
             os.rename(clip.file_path, os.path.join(os.path.dirname(clip.file_path), new_name))
         except Exception as err:
@@ -548,8 +561,21 @@ def get_clip_piece(file_path: str) -> Optional[ClipPiece]:
     clip_piece.room_id, clip_piece.date_time = room_id, date_time
     if not course_name:
         clip_piece.course_name = get_course_name(clip_piece.room_id)
+    else:
+        clip_piece.course_name = course_name
     if not video_type:
+
         clip_piece.video_type = get_video_type(clip_piece.room_id, clip_piece.video_size)
+    else:
+        clip_piece.video_type = video_type
+
+    if not file_name_type:
+        clip_piece.file_name_type = get_file_name_type(file_name)
+    else:
+        clip_piece.file_name_type = file_name_type
+
+    clip.close()
+
     return clip_piece
 
 
@@ -582,7 +608,9 @@ def main():
         return 0
 
     # 다운받은 목록 확인용
-    save_csv_file(clips, "video_clips.csv")
+    # ex) video_clips_240814_101001.csv
+    output_name = f"video_clips_{datetime.now().strftime('%y%m%d_%H%S%M')}.csv"
+    save_csv_file(clips, output_name)
 
     while True:
         selected_clips = display_menu(clips)
